@@ -1,0 +1,1061 @@
+BFMC Embedded Platform documentation
+
+  Documentatia descrie aplicatia low level care va rula pe micro-controller-ul
+Nucleo.
+  In Nucleo, se controleaza miscarea propriu zisa a robotului fiind o interfata
+intre controller-ul high level si senzorii si actuatorii low level.
+  Foloseste doua librarii principale:
+  - mbed 2
+  - mbed 2 rtos
+
+  Proiectul este structurat in 5 categorii:
+  1. brain - masina de stari a robotului
+  2. hardware- driverele pentru actuator si senzori`
+  3. signal - librariile pentru procesarea semnalelor
+  4. utils - utilitare de care am putea avea nevoie
+  5. examples- exemple de utilizare pentru utils
+
+
+Continutul documentatiei:
+
+1. Tool-uri pentru dezvoltarea aplicatiei
+  Aplicatia low-level care va rula pe Nucleo este scrisa in C/C++ folosind
+librariile mentionate anterior, mbed 2 si mbed 2 rtos.
+  Structura aplicatiei este:
+  1. doc
+  2. examples - exemple pentru scripturi
+  3. include
+  4. libs - librariile externe, de exemplu mbed si rtos
+  5. src - scripturi si features
+  6. build - binarele pe care le folosim pentru a programa micro-controller-ul
+
+  Avem un script numit flash_win.bat pentru a da flash micro-controller-ului,
+daca vrem sa folosim Windows. Trebuie sa il editam putin ca sa fie partitia buna.
+
+Build
+  Trebuie sa dam build iar dupa fiecare modificare inainte sa putem da flash
+iar(duh), fie copiem noi binarul pe micro-controller fie folosim script-ul ala.
+
+Componente noi
+  Fiecare fisier noi se considera o componenta ca sa modularizam proiectul.
+  Headere in include, fisiere cu cod in src.
+  Facem asta cu script-ul newComponent.py aparent, pare ca componentele sunt
+adaugate la o lista OBJECTS.
+  python newComponent.py –help python newComponent.py -c test are paramentrul
+ala help cu care putem vedea ce alti parametrii pot fi dati.
+  Compilarea se face cu un Makefile.
+
+Flashing
+  Se conecteaza micro-controller-ul la laptop, apare cu numele NODE_F401RE.
+  Are mai multe parti:
+  - main part
+  - programmer/debugger- conector mini-usb, LED tricolor, apare in documentatie
+(a cui documentie?)
+  - micro-controller- are conectorii, butonul de reset si power,
+inainte de flash trebuie sa fie pornit, se vede dupa power LED, LD3(LED rosu).
+Ca sa poti sa copiezi astepti pana nu mai clipeste rosu/verde si LED-ul tricolor
+este verde, pare sa fie efectiv drag and drop.
+
+  Daca folosim Linux, ne trebuie Gnu Embedded Toolchain for Arm, care ei
+spun sa o descarcam de aici:
+https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-rm/downloads ,
+si trebuie sa adaugam variabila de mediu la bashrc ca sa putem sa o folosim.
+“echo “export GCC_ARM_FOLDER=/home/user/Workspace/Crosscompilers/
+gcc-arm-none-eabi-8-2019-q3-update/bin” >> ~/.bashrc”
+
+
+Hardware package
+  Are doua parti:
+  1. Driver
+    Controleaza actuatorii si ofera o interfata pentru functionalitatea
+  low level a senzorilor
+  2. Encoder
+
+  Functionalitatile sunt impartite in doua namespace-uri:
+  1. Drivers namespace- low level pulse counter
+  2. Encoder namespace - rotary speed encoder
+
+  Drivers namespace
+    Contine aplicatiile pentru interactiunea cu actuatorii si senzorii.
+  Avem 3 drivere:
+  -dc motor driver
+  -servo motor drive
+  -quadrature counter
+
+
+  Pentru dc motor driver, avem urmatoarele clase/interfete cu functii asociate:
+    (pwm vine de la Pulse-width modulation)
+  1. class ICurrentGetter
+    Subclasata in hardware::drivers::CMotorDriverVnh
+
+    Are 1 functie publica:
+
+    virtual float getCurrent()
+
+    E un simplu getter pentru intensitatea curentului.
+
+  2. class IMottorCommand
+    Subsclasata in hardware::drivers::CMotorDriverVnh
+
+    Are 4 functii publice:
+
+    virtual void setSpeed(float f_pwm)
+    virtual void brake()
+    virtual void inverseDirection(float f_pwm)
+    virtual bool inRange(float f_pwm)
+
+    Este complementara ICurrentGetter, fiind folosita pentru a seta parametrii
+  pentru motor, in cazul de fata pentru a seta viteza, pentru a frana,
+  pentru a schimba directia masinii si inRange probabil este un utilitar
+  pentru a testa conditii.
+
+  3. class CMotorDriverVnh
+    Clasa principala pentru dc motor driver.
+
+    Contine un ICurrentGetter si un IMottorCommand.
+
+    Are rolul de a controla motorul vnh5019.
+
+    Pentru directie si viteza de rotatie, valorile pozitie inseamna inainte,
+  negative inseamna inapoi, valorile sunt magnitudini, deci in general
+  semnalul la intrare se va afla in [-1,1], intervalul fiind asa mic pentru
+  a evita ca robotul sa mearga cu viteza mare aparent. POTENTIAL: modificam
+  API-ul pentru a modifica intervalul la proba de viteza.
+
+    Are 8 functii publice:
+    1. CMotorDriverVnh(PinName f_pwmPin, PinName f_inaPin, PinName f_inbPin,
+    PinName f_currentPin)
+      Functie de instantiere, limitele driver-ului sunt -0.5 si 0.5
+    duty cycles ale semnalului PWM.
+      Parametrii:
+        f_pwmPin: PWM pin
+        f_inaPin: pin A
+        f_inbPin: pin B
+        f_currentPin: current analog pin
+
+    2. CMotorDriverVnh(PinName f_pwmPin, PinName f_inaPin, PinName f_inbPin,
+    PinName f_currentPin, float f_inf_limit, float f_sup_limit)
+      Functie de instantiere, se pot specifica limite. Se tine cont de semnul
+    limitelor pentru directie(daca dam o limita negativa, o sa fie limita
+    pentru a merge cu spatele, daca e pozitiva este pentru mersul cu fata)
+      Parametrii:
+      f_pwmPin: PWM pin
+      f_inaPin: pin A
+      f_inbPin: pin B
+      f_currentPin: current analog pin
+      f_inf_limit: inferior limit
+      f_sup_limit: superior limit
+
+    3. ~CMotorDriverVnh()
+      Uite instanta, nu mai e instanta.
+
+    4. void setSpped(float f_pwm)
+      Functie provenita de la IMottorCommand.
+      Controleaza rotatia motorului.
+    Valoare pozitiva=>rotatia a motorului=>miscare inainte
+    Valoare negativa=>rotatie a motorului=>miscare inapoi
+      Parametrii:
+      f_pwm: duty cycle of generated pwm signal
+
+    5. void brake()
+      Functie provenita de la IMottorCommand.
+      Pune frana in rotatia motorului, o metoda dinamica de franare.
+
+    6. void inverseDirection(float f_pwm)
+      Functie provenita de la IMottorCommand.
+      Schimba directia de rotatie a motorului si seteaza o noua valoare de
+    duty cycle.
+      Parametrii:
+      f_pwm: duty cycle of generated pwm signal
+
+    7. float getCurrent()
+      Functie provenita de la ICurrentGetter.
+      Intoarce intensitatea curentului din motor.
+      Nota: E nevoie sa fie testata. Nu stiu daca asta inseamna ca trebuie
+    sa testam valoarea intoarsa ca sa facem ceva cu ea sau daca functia
+    in sine trebuie testata ca sa ne asiguram ca merge.
+
+    8. bool inRange(float f_pwm)
+      Functie provenita de la IMottorCommand.
+      Verifica daca un numar se afla intr-un inverval. Cum intervalul nu
+    este dat, este probabil cel rezultat de la initializare(default [-0.5,0.5],
+  particular [f_inf_limit,f_sup_limit]).
+      Parametrii:
+      pwm: value
+
+    Are 4 variabile private:
+    1. Pwm Out m_pwm - pin PWM de output
+    2. DigitalOut m_ina - pin A pentru directie
+    3. DigitalOut m_inb - pin B pentru directie
+    4. AnalogIn m_current_in - intensitatea curentului din motor.
+
+  Pentru servo motor driver, avem urmatoarele clase/interfete cu functii asociate:
+
+  1. class ISteeringCommand
+    Subclasta in hardware::drivers::CSteeringMotor.
+
+    O interfata simpla pentru a controla unghiul directiei.
+
+    Are 2 functii publice:
+      virtual void setAngle(float f_angle)
+      virtual bool inRange(float f_angle)
+
+  2. class CSteeringMotor
+    Clasa principala pentru servo motor driver.
+
+    Este folosita pentru a controla servo motorul care este conectat la
+  roti.
+
+    Are 5 functii publice:
+    1. CSteeringMotor(PinName f_pwm)
+      Functie de instantiere, pune directia in pozitia 0. Limitele sunt setate
+    la -23 si 23 de grade.
+      Parametrii:
+      f_pwm: pin connected to servo motor
+
+    2. CSteeringMotor(PinName f_pwm, float f_inf_limit, float f_sup_limit)
+      Functie de instantiere, pe langa pin-ul de pwm se dau si limtele
+    pentru unghiul de directie.
+      Parametrii:
+        f_pwm: pin connected to servo motor
+        f_inf_limit: inferior limit
+        f_sup_limit: superior limit
+
+    3. ~CSteeringMotor()
+      Uite instanta, nu mai e instanta.
+
+    4. void setAngle(float f_angle)
+      Functie provenita din ISteeringCommand.
+      Seteaza unghiul directiei pentru servo motor.
+      Parametrii:
+        f_angle- unghiul in grade: - valoare pozitiva=>dreapta
+                                   - valoare negativa=>stanga
+
+    5. bool inRange(float f_angle)
+      Functie provenita din ISteeringCommand.
+      Verifica daca unghiul se afla intr-un interval.
+      Parametrii:
+        f_angle: value
+
+    Are 1 functie privata:
+    1. float conversion(float f_angle)
+      Face conversie de la unghiul directiei in grade la duty cycle pentru
+    semnalul pwm.
+      Intoarce un duty cycle in [0,1].
+      Parametrii:
+      f_angle: angle degree
+
+    Are 3 variabile private:
+      1.PwmOut m_pwm- pin PWM de output
+      2. const float m_inf_limit - limita inferioara
+      3. const float m_sup_limit - limita superioara.
+
+  Pentru quadrature counter, avem urmatoarele clase/interfete cu functii asociate:
+
+  1. class IQuadratureCounter_TIMX
+    Subclasata in hardware::drivers::CQuadratureCounter_TIM4
+
+    O interfata generica pentru a accesa functionalitatea de timer pentru a
+  decodifica encoderul de cuadratura si pentru a obtine si reseta pozitia
+  primita de la encoder.
+
+    Are 2 functii publice:
+      virtual int16_t getCount()
+      virtual void reset()
+
+    2. class CQuadratureCounter_TIM4
+      Clasa principala pentru primirea si decodificarea semnalului de
+    cuadratura. Semnalul de cuadratura va veni pe PB6 si PB7.
+
+      Contine o IQuadratureCounter_TIMX.
+
+      Este o clasa singleton.
+
+      Are 2 functii publice:
+      1. int16_t getCount()
+        Functie provenita din IQuadratureCounter_TIMX.
+        Intoarce pozitia de la encoder, reprezentand ultima valoare de la timer.
+
+      2. void reset()
+        Functie provenita din IQuadratureCounter_TIMX.
+        Reseteaza valoarea counter-ului la 0.
+
+      Are 1 functie publica statica:
+      1. CQuadratureCounter_TIM4 *Instance()
+        Functie standard de singleton, intoarce fie instanta existenta fie o
+      adresa pentru o noua instanta daca aceasta nu exista.
+
+    3. class CQuadratureCounter_TIM4_Destroyer
+      Folosita pentru deinstantierea clasei CQuadratureCounter_TIM4.
+
+      Are 2 functii publice:
+    1. ~CQuadratureCounter_TIM4_Destroyer()
+      Deinstantiaza counter-ul.
+    2. void SetSingleton(CQuadratureCounter_TIM4 *s)
+      Functie pentru a seta instanta de singleton, necesara pentru a avea
+    ce sa deinstantiem.
+      Parametrii:
+      s - adresa singleton-ului
+
+  Encoder namespace
+    In acest namespace sunt implementate functionalitatile pentru viteza de
+  rotatie. Contine doua interfete pentru a accesa valorile filtrate si
+  nefiltrate si doua clase cu servicii de encoding, impartite la fel.
+
+    Interfetele sunt:
+    1. class IEncoderGetter
+      Subclasata in hardware::encoders::CQuadratureEncoder.
+
+      Interfata de baza pentru viteza de rotatie.
+
+      Are 3 functii publice:
+      1. virtual int16_t getCount()
+        Intoarce impulsul din ultima perioada sub forma de viteza de rotatie.
+      Poate sa fie un numar pozitiv sau negativ, fiind apoi trimis la
+      encoder-ul de cuadratura.
+      2. virtual float getSpeedRps()
+        Intoarce numarul de rotatii pe secunda al encoder-ului bazat pe o
+      perioada predefinita si pe rezolutia encoder-ului.
+      3. virtual bool isAbs()
+        Intoarce capacitatea encoder-ului de a interpreta informatii.
+        Daca intoarce false, encoder-ul poate intoarce orientarea ca o
+      valoare pozitiva sau negativa a vitezei de rotatie.
+        Daca intoarce true, encoder-ul va intoarce doar valori pozitive(absolute).
+
+    2. class IEncoderNonFilteredGetter
+        Subclasata in hardare::encoders::CQuadratureEncoderWithFilter.
+
+        Reprezinta o interfata de accesare a valorilor nefiltrate, fiind
+      utilizata cand un filtru este atasat encoder-ului si interfata
+      IEncoderGetter intoarce valorile filtrate. In acest caz, interfata ne
+      asigura accesul la valorile nefiltrate.
+
+      Are 2 functii publice:
+      1. virtual int16_t getNonFilteredCount()
+        Intoarce valoarea nefiltrata a impulsului din ultima perioada.
+      2. virtual float getNonFilteredSpeedRps()
+        Intoarce valoarea nefiltrata a vitezei de rotatie in rotatii pe secunda.
+
+      Clasele sunt:
+      1. class CQuadratureEncoder
+        Subclasata in hardware:encoders::CQuadratureEncoderWithFilter.
+
+        Contine o IEncoderGetter.
+
+        Implementeaza un task periodic care ia valoarea de la counter si o
+      reseteaza la 0.
+        Are 6 functii publice:
+        1. CQuadratureEncoder(float f_period_sec,
+        hardware::drivers::IQuadratureCounter_TIMX *f_quadraturecounter,
+        uint16_t f_resolution)
+          Functie de instantiere.
+          Parametrii:
+            f_period_sec- perioada task-ului
+            f_quadraturecounter - instanta de quadrature counter
+            f_resolution - rezolutia encoder-ului de rotatie(counter per
+            revolution)
+        2. void startTimer()
+          Porneste RosTimer() pentru a apela period functia _run.
+        3. void _run()
+          Rulata periodic.
+        4. int16_t getCount()
+          Functie getter pentru numarul de impulsuri din ultima perioada.
+        5. getSpeedRps()
+          Functie getter pentru viteza de rotatie(rotatii pe secunda).
+        6. virtual bool isAbs()
+        Intoarce capacitatea encoder-ului de a interpreta informatii.
+        Daca intoarce false, encoder-ul poate intoarce orientarea ca o
+      valoare pozitiva sau negativa a vitezei de rotatie.
+        Daca intoarce true, encoder-ul va intoarce doar valori pozitive(absolute).
+
+        Are 5 variabile protejate:
+        1. hardware::drivers::IQuadratureCounter_TIMX *m_quadraturecounter-
+        interfata pentru quadrature counter
+        2. int16_t m_encoderCnt - ultima valoare de la quadrature counter
+        3. const float m_taskperiod_s - perioada de sampling
+        4. const uint16_t m_resolution - rezolutia encoder-ului
+        5. RtosTimer m_timer - timer-ul pentru a apela period _run.
+
+      2. class CQuadratureEncoderWithFilter
+        Implementeaza aceleasi functionalitati ca si CQuadratureEncoder, putand
+      in plus sa filtreze valorile.
+        Are 5 functii publice:
+        1. CQuadratureEncoderWithFilter(float f_period_sec,
+        hardware::drivers::IQuadratureCounter_TIMX *f_quadraturecounter,
+        uint16_t f_resolution, signal::filter::IFilter<float> &f_filter)
+          Functie de instantiere.
+          Parametrii:
+            f_period_sec - perioada task-ului
+            f_quadraturecounter- instanta de quadrature counter
+            f_resolution - rezolutia encoder-ului de rotatie(count per revolution)
+            f_filter - referinta la filtru
+        2. int16_t getCount()
+          Functie de getter pentru ultima valoare filtrata.
+        3. float getSpeedRps()
+          Functie de getter pentru ultima valoare filtrata a vitezei de rotatie
+        (in rotatii pe secunda).
+        4. int16_t getNonFilteredCount()
+          Functie de getter pentru ultima valoare nefiltrata.
+        5. float getNonFilteredSpeedRps()
+          Functie de getter pentru ultima valoare nefiltrata a vitezei de rotatie
+        (in rotatii pe secunda).
+
+          Are 1 functie protejata:
+          1. void _run()
+            Folosita pentru a lua valoarea de la quadrature counter si de a
+          o reseta. In ultimul pas, filtreaza valoarea masurata. Este apelata
+          automat periodic de rtos timer daca a fost apelat startTimer().
+
+          Are 2 variabile protejate:
+          1. double m_encoderCntFiltered - ultima valoare filtrata de la
+        quadrature counter
+          2. singal::filter::IFilter<float> &m_filter - interfata filtrului.
+
+
+  Signal namespace
+    Acest namespace contine functionalitati pentru a procesa semnalul, precum
+  functii de transfer, filtre si controller. Este impartit in 3:
+  -filter namespace
+  -system models namespace
+  -controllers namespace
+
+    Filter namespace
+      Acest namespace contine functionalitatile filtrelor. Avem patru tipuri
+    de filtre:
+    -mean filter
+    -median filter
+    -finite-impulse-response-filter
+    -infinite-impulse-response-filter
+
+    Implementarea se foloseste de 5 clase:
+    1. template<class T>
+    class IFilter
+        Interfata generica pentru filtre.
+        Parameterii template-ului:
+        T-tipul semnalului de intrare si iesire.
+
+        Subclasata de signal::filter::lti::siso::CFIRFilter< T, NB >,
+         signal::filter::lti::siso::CIIRFilter< T, NA, NB >,
+         signal::filter::lti::siso::CMeanFilter< T, NB >,
+         signal::filter::nlti::siso::CMedianFilter< T, N > .
+
+        Are 1 functie publica:
+        virtual T operator()(T&)
+
+      2. template<class T, uint32_t NA, uint32_t NB>
+      class CIIRFilter
+        Interfata pentru un filtru IIR(Infinite impulse response).
+        Parametrii template-ului:
+        T- tipul semnalului de intrare si de iesire
+        NA- numarul de coeficienti ai filtrului de feedback
+        NB- numarul de coeficienti ai filtrului de feedforward
+
+      Are 2 functii publice:
+      1. CIIRFilter(const utils::linalg::CRowVector<T, NA> &f_A,
+      const utils::linalg::CRowVector<T, NB> &f_B)
+        Functie de instantiere.
+        Parametrii:
+        f_A - coeficientii pentru filtrul de feedback
+        f_B - coeficientii pentru filtrul de feedforward
+
+      2.T operator()(T&f_u)
+          Operator pentru a aplica filtrul.
+          Intoarce datele de intrare filtrate.
+          Parametrii:
+          f_u - datele de intrare
+
+      3. template<class T, uint32_t NB>
+      class CFIRFilter : public signal::filter::IFilter<T>
+        Interfata pentru un filtru FIR(Finite impulse response).
+        Parameterii template-ului:
+        T- tipul semnalului de intrare si de iesire
+        NB- numarul de coeficienti pentru filtrul de feedforward
+
+      Are 2 functii publice:
+      1. CFIRFilter(const utils::linalg::CRowVector<T, NB> &f_B)
+        Functie de instantiere.
+        Parametrii:
+        f_B : coeficientii pentru filtrul de feedforward
+      2. T operator()(T &f_u)
+        Operator pentru a aplica filtrul.
+        Intoarce datele de intrare filtrate.
+        Parametrii:
+        f_u - datele de intrare
+
+      4. template<class T, uint32_t NB>
+      class CMeanFilter : public signal::filter::IFilter<T>
+        Interfata pentru un filtru mean(average).
+        Parametrii template-ului:
+        T- tipul semnalului de intrare si de iesire
+        NB - numarul valorilor folosite pentru a calcula valoarea medie
+
+      Are 2 functii publice:
+      1. CMeanFilter()
+        Functie de instantiere.
+      2. T operator()(T &f_u)
+        Operator pentru a aplica filtrul.
+        Intoarce datele de intrare filtrate.
+        Parametrii:
+        f_u - datele de intrare
+
+      5. template<class T, uint32_t N>
+      class CMedianFilter : public signal::filter::IFilter<T>
+        Interfata pentru un filtru median(intoarce valoarea mediana dupa
+      ce valorile de intrare au fost sortate).
+        Parametrii template-ului:
+        T- tipul valorilor
+        N- dimensiunea filtrului
+
+        Are 4 functii publice:
+        1. CMedianFilter()
+          Functie de instantiere.
+
+        2. T addNewValue(T &f_val)
+          Adauga valoarea f_val in lista de valori.
+        3. T getMedian()
+          Intoarce valoarea mediana.
+        4. T operator()(T &f_v)
+          Operator pentru a aplica filtrul.
+          Intoarce datele de intrare filtrate.
+          Parametrii:
+          f_u - datele de intrare
+
+
+    System Models namespace
+      Acest namespace contine functionalitati legate de reprezentarea
+    sistemelor, precum functii de trasnfer si modele de spatii de stari
+    (state space model).
+      Clasele implementate incearca sa simbolizeze comportamentul unui sistem
+    in domeniul de spatiu discret, deci putem implementa filtre, controllere
+    sau alte sisteme(exemplu: poate interpreta comportamentul unui dc motor).
+      Include trei tipuri de modele:
+    -functii de transfer
+    -modele de spatii de stari(state space model)
+    -modele de sisteme non-liniare(non-linear system model)
+
+    Clase implementate:
+    1. template<class T, uint32_t NNum, uint32_t NDen>
+    class CDiscreteTransferFunction
+      O clasa pentru functii de transfer in domeniul transformatei Z,
+    o functie de transfer discreta.
+      Functia de transfer este exprimata in functie de z^-1 si reprezentata
+    ca raportul dintre doua polinomiale.
+      Parametrii template-ului:
+      T- tipul coeficientilor
+      NNum - gradul polinomialei in numitor
+      NDen - gradul polinomialei in numarator
+
+      Are 11 functii publice:
+      1. CDiscreteTransferFunction()
+        Functie de instantiere pentru un obiect fara input, initializeaza
+      coeficientii cu 0, cu exceptia primului coeficient initializat cu 1.
+
+      2. CDiscreteTransferFunction(const CNumType &f_num, const CDenType &f_den)
+        Functie de instantiere pentru un obiect cu polinomialele din input.
+        Parametrii:
+        f_num - coeficientii polinomialei de la numitor
+        f_den- coeficientii polinomialei de la numarator
+
+      3. void clearMemory()
+        Seteaza continutul memoriei la 0.
+
+      4. template<uint32_t N>
+      void shiftMemory(utils::linalg::CMatrix<T, 1, N> &f_mem)
+        Shifteaza valorile memorate. Dupa shiftarea primului element, putem
+      plasa un nou element in memorie pe pozitia acestuia.
+        Parametrii:
+        f_mem- matrice de memorie
+
+      5. T operator()(const T &f_input)
+        Aplica functia de transfer pe valoarea semnalului de intrare.
+        Intoarce valoarea urmatorului semnal de iesire.
+        Paramterii:
+        f_input - urmatoarea valoare a semnalului de intrare
+
+      6. void setNum(const CNumType &f_num)
+        Seteaza coeficientii polinomialei de la numitor.
+        Parametrii:
+        f_num- coeficientii numitorului
+
+      7. void setDen(const CDenType &f_den)
+        Seteaza coeficientii polinomialei de la numarator.
+        Parametrii:
+        f_den - coeficientii numaratorului
+
+      8.CNumType &getNum()
+        Functie getter pentru numitor.
+        Nota: CNumType complet este
+        const signal::systemmodels::lti::
+        siso::CDiscreteTransferFunction<T, NNum, NDen>::CNumType .
+        Functia intoarce coeficientii polinomialei.
+
+      9.CDenModType &getDen()
+        Functie getter pentru numarator.
+        Nota: CDenModType complet este
+        const signal::systemmodels::lti::
+        siso::CDiscreteTransferFunction<T, NNum, NDen>::CDenModType .
+        Functia intoarce coeficientii polinomialei, cu exceptia primului.
+
+      10. float getDenCurrent()
+        Functie getter pentru primul coeficient al polinomialei numaratorului.
+
+      11. T getOutput()
+        Intoarce ultima iesire calculata.
+
+    2. template<class T, uint32_t NA, uint32_t NB, uint32_t NC>
+    class CSSModel
+      Clasa folosita pentru modelul spatiului starilor(State Space Model).
+      Parametrii template-ului:
+      T- tipul de variabile
+      NA- numarul de variabile de stare
+      NB- numarul de variabile de control
+      NC- numarul de variabile de observatie
+
+      Are 4 functii publice:
+      1. CSSModel(const CStateTransitionType &f_stateTransitionMatrix,
+      const CInputMatrixType &f_inputMatrix,
+      const CMeasurementMatrixType &f_measurementMatrix)
+        Functie de instantiere. Modelul rezultat va avea o matrice a spatiului
+      starilor bazata pe inputMatrix. Starea initiala este 0 si matricea
+      pentru tranzitiile control-observatie este plina de 0.
+      Parametrii:
+      f_stateTransitionMatrix - matricea pentru tranzitii intre stari
+      f_inputMatrix - matricea pentru tranzitia intre control si stari
+      f_measurementMatrix - matricea pentru tranzitia intre stari si observatie
+
+      2. CSSModel(const CStateTransitionType &f_stateTransitionMatrix,
+      const CInputMatrixType &f_inputMatrix,
+      const CMeasurementMatrixType &f_measurementMatrix,
+      const CDirectTransferMatrixType &f_directTransferMatrix)
+        Functie de instantiere. Ca diferenta fata de functia anterioara, primim
+      matricea directTransferMatrix pentru tranzitiile intre control si
+      observatie.
+      Parametrii:
+      f_stateTransitionMatrix - matricea pentru tranzitii intre stari
+      f_inputMatrix- matricea pentru tranzitii intre control si stari
+      f_measurementMatrix - matricea pentru tranzitii intre stari si observatie
+      f_directTransferMatrix - matricea pentru tranzitii intre control si observatie
+      f_state- starea initiala a sistemului
+
+      3. utils::linalg::CColVector<T, NC> operator()(const CControlType &f_inputVector)
+        Functie care aplica matricea de observatie asupra inputului si
+      intoarce valorile de observatie.
+        Parametrii:
+        f_inputVector- valorile de control
+
+      4. void updateState(const CControlType &f_inputVector)
+        Functie care actualizeaza valorile de control.
+        Parametrii:
+        f_inputVector- valorile de control
+
+      5. utils::linalg::CColVector<T, NC> getOutput(const CControlType &f_inputVector)
+        Functie care calculeaza si intoarce valorile de observatie bazate pe
+      valorile de control si starea sistemului.
+      Parametrii:
+      f_inputVector- valorile de control
+
+    3. template<class T, uint32_t NA, uint32_t NB, uint32_t NC>
+    class CDiscreteTimeSystemModel
+      Clasa folosita pentru sistemele non-liniare(discrete).
+      Parametrii template-ului(presupunere):
+      T- tipul de variabile
+      NA- numarul de variabile de stare
+      NB- numarul de variabile de control
+      NC- numarul de variabile de observatie
+
+      Are 5 functii publice:
+      1. CDiscreteTimeSystemModel(const double f_dt)
+        Functie de instantiere pentru un sistem discret.
+        Parametrii:
+        f_dt - timp de sampling
+
+      2. CDiscreteTimeSystemModel(const CStatesType &f_states, const double f_dt)
+        Functie de instantiere pentru un sistem discret.
+        Parametrii:
+        f_states- starile initiale ale sistemului
+        f_dt- timp de sampling
+
+      3. virtual CStatesType update(const CControlType &f_input)
+        Bazata pe modelul de tranzitii intre stari, calculeaza sistemul de
+      stari in functie de input, membrii relevanti ai clasei trebuind apoi
+      sa fie sincronizati.
+        Intoarce un vector de stari de tip CStatesType.
+        Parametrii:
+        f_input - vector de intrare cu valori de control
+
+      4. virtual CObservationType calculateOutput(const CControlType &f_input)
+        Bazata pe modelul de tranzitii intre stari, calculeaza sistemul de
+      output(observatie) bazat pe input, membrii relevanti ai clasei trebuind
+      apoi sa fie sincronizati.
+        Intoarce un vector de observatie de tip CObservationType.
+        Parametrii:
+        f_input - semnalul de control de la intrare
+
+      5. CStatesType getStates()
+        Intoarce vectorul de stari.
+
+    Controllers namespace
+      Acest namespace implementeaza functionalitatile pentru controller,
+    cum ar fi un convertor, un controller siso sau un controller pentru motor.
+    Un convertor transforma semnalul dintr-o unitate de masura in alta,
+    controller-ul siso presupune realizarea unui controller
+    proportional-integral-derivative si a unei interfete abstracte pentru
+    controllere cu un singur input si un singur output. Controller-ul pentru
+    motor implementeaza un regulator pentru viteza de rotatie a motorului,
+    aplicand niste restrictii pentru siguranta.
+
+      Contine 6 clase:
+      1. class IConverter
+        Intervata generica pentru un convertor cu o intrare si o iesire.
+        Subclasta in signal::controllers::CConverterPolynom< NOrd >,
+        signal::controllers::CConverterSpline< NrBreak, NOrd > .
+
+        Are 1 functie publica:
+        1. virtual float operator()(float)
+
+      2. template<uint8_t NOrd>
+      class CConverterPolynom
+
+        Clasa pentru un convertor polinomial.
+        Parametrii template-ului:
+        NOrd- gradul convertorului
+
+        Are 2 functii publice:
+        1. CConverterPolynom(std::array<float, NOrd + 1> f_coeff)
+          Functie de instantiere pentru un convertor polinomial.
+          Parametrii:
+          f_coeff- lista de coeficienti
+
+        2. float operator()(float f_v)
+          Converteste valoarea de input f_v pe baza polinomialei.
+
+      3.template<uint8_t NrBreak, uint8_t NOrd>
+      class CConverterSpline
+        Clasa pentru un convertor bazat pe un set de puncte in care se
+      schimba functia polinomiala folosita pentru conversie si
+      mai multe functii polinomiale.
+        Parametrii template-ului:
+        NrBreak- numarul de puncte
+        NOrd- gradul convertorului
+
+        Are 3 tipuri publice de date:
+        1. template<>
+        using CCoeffContainerType = std::array<float, NOrd + 1>
+          Tip de date folosit pentru un container de coeficienti.
+        2. template<>
+        using CSplineContainerType = std::array<CCoeffContainerType, NrBreak + 1>
+          Tip de date folosit pentru un container de Splines(aproximari
+        de curba).
+        3. template<>
+        using CBreakContainerType = std::array<float, NrBreak>
+          Tip de date folosit pentru un container de puncte(de frangere).
+
+        Are 2 functii publice:
+        1. CConverterSpline(CBreakContainerType f_breaks,
+        CSplineContainerType f_splines)
+          Functie de instantiere a unui convertor spline.
+          Parametrii:
+          f_breaks - lista de puncte de frangere.
+          f_splines- lista de functii polinomiale
+
+        2. float operator()(float f_value)
+          Converteste valoarea de input f_value.
+
+      4. template<class T>
+      class IController
+        Interfata generica pentru un controller siso(o singura intrare, o
+      singura iesire).
+        Parametrii template-ului:
+        T- tipul variabilelor(float,double)
+        Subclasata in signal::controllers::siso::CPidController< T > .
+
+        Are 2  functii publice:
+        1. virtual T calculateControl(const T&)
+        2. virtual void clear()
+
+      5. template<class T>
+      class CPidController : public signal::controllers::siso::IController<T>
+        Clasa pentru a genera o functie de transfer discreta, folosita in
+      realizarea unui controller proportional-integral-derivative(pid), care este
+      discretizat folosind metoda lui Euler.
+        Parametrii template-ului:
+        T- tipul variabilelor(float,double)
+
+        Are 1 tip public de date:
+        1. template<>
+        using CPidSystemmodelType = signal::systemmodels::
+        lti::siso::CDiscreteTransferFunction<T, 3, 3>
+          Tip de date folosit pentru un model de sistem pentru un pid controller.
+
+        Are 5 functii publice:
+        1. CPidController(T f_kp, T f_ki, T f_kd, T f_tf, T f_dt)
+          Functie de instantiere pentru un controller pid. Are nevoie de
+        parametrii pid pentru a calcula functia de transfer discreta.
+        Parametrii:
+        f_kp - factorul de proportionalitate
+        f_ki - factorul de integrare
+        f_kd - factorul de derivare
+        f_tf - constanta filtrului de derivare dupa timp
+        f_dt - timp de sampling
+
+        2. CPidController(CPidSystemmodelType f_pid, T f_dt)
+          Functie de instantiere pentru un controller pid, primind functia
+        de transfer discreta deja calcualta.
+          Parametrii:
+          f_pid - functia de transfer discreta
+          f_dt - timp de sampling
+
+        3. calculateControl(const T &f_input)
+          Calculeaza semnalul de control pe baza erorii de intrare. Trebuie sa
+        fie aplicata in fiecare perioada.
+          Parametrii:
+          f_input- eroarea de input
+
+        4. void serialCallback(char const *a, char *b)
+          Metoda de callback serial pentru a seta controller-ul. Primul
+        string contine parametrii, in ordinea proportional, integral, derivative.
+          Parametrii:
+          a- string din care sa citeasca datele
+          b- string in care sa scrie rezultatele
+
+        5. void clear()
+          Seteaza tot continul memoriei la 0.
+
+      6. class CMotorController
+        Implementeaza un controller siso. Are nevoie de o IEncoderGetter pentru
+      a primi valorile masurate, un controller pentru a calcula semnalul de
+      control. Poate fi completata cu un covertor pentru a schimba unitatea de\
+      masura.
+        Are 8 functii publice:
+        1. CMotorController(hardware::encoders::IEncoderGetter &f_encoder,
+        ControllerType<double> &f_pid,
+        signal::controllers::IConverter *f_converter = NULL,
+        float f_inf_ref = -225, float f_sup_ref = 225)
+          Functie de instantiere pentru controller.
+          Parametrii:
+          f_encoder- referinta la un encoder pentru valorile initiale
+          f_pid - referinta la un controller pid
+          f_converter- [optional] pointer la un convertor
+          f_inf_ref - [optional] limita inferioara a semnalului de referinta
+          f_sup_ref - [optional] limita superioara a semnalului de referinta
+
+        2. void setRef(double f_RefRps)
+          Seteaza valoarea semnalului de referinta.
+          Parametrii:
+          f_RefRps - valoarea semnalului de referinta(probabil in rotatii pe secunda).
+
+        3. double getRef()
+          Intoarce valoarea semnalului de referinta.
+
+        4. double get()
+          Intoarce ultima valoare calculata a semnalului de control.
+
+        5. double getError()
+          Intoarce valoarea erorii dintre valoarea masurata si valoarea de
+        referinta.
+
+        6. void clear()
+          Reseteaza continutul memoriei controller-ului.
+
+        7. int8_t control()
+          Calculeaza urmatoarea valoare a semnalului de control, folosind
+        interfetele din constructor.
+          Intoace fie valoarea calculata, fie true/false daca controller-ul
+        functioneaza corect sau daca are o eroare, nu este clar.
+
+        8. bool inRange(double f_RefRps)
+          Verifica daca un numar se afla intr-un interval dat.
+          Parametrii:
+          f_RefRps - valoarea de referinta pentru controller, data in
+        rotatii pe secunda.
+
+  Utils namespace
+    Acest namespace contine utilitare pentru comunicarea prin seriala.
+    Impartit in:
+    - linalg - operatii pe matrici
+    - queue - coada generica, fifo
+    - serial - contine un "CSerialMonitor" care interpreteaza este un
+  intermediar pentru mesaje de la hardware la software.
+    - task - folosit pentru task-uri periodice, foloseste o clasa de baza
+  CTask si task-uri CTaskManager(practic un task va avea un CTask pe care
+  il va apela periodic)
+
+    Implementarea foloseste 3 clase:
+    1. class CTask
+      Functionalitate de baza pentru un task, apelat periodic de un
+    manager.
+      Subclasat in examples::CBlinker, examples::CEchoer,
+      examples::sensors::CEncoderPublisher, utils::serial::CSerialMonitor .
+
+      Are 5 functii publice:
+      1. CTask(uint32_t f_period)
+        Functie de instantiere, se specifica perioada de apelare a task-ului.
+        Parametrii:
+        f_period- perioada de executie
+
+      2. ~CTask()
+        Functie de deinstantiere.
+
+      3. void run()
+        Functia de run, apeleaza _run care este in realitate functionalitatea
+      task-ului(_run e suprascrierea in celelalte clase).
+
+      4. void timerCallback()
+
+      5. void Trigger()
+        Seteaza un "flag true state".
+
+    2. class CSerialMonitor
+      Clasa folosita pentru a decodifica mesaje primite de la celalalt device
+    (probabil se refera la componenta low-level) si trimiterea lor catre
+    alte functii(deci intermediar hardware-software).
+      Pentru decodificare, are o structura predefinita cu o parte de header si
+    o parte de date. Header-ul(cheia) are 4 caractere, datele sunt definite de
+    user. Mesajul primit trebuie sa inceapa cu "#", raspunsul trebuie sa aiba
+    aceeasi cheie si sa inceapa cu "@".
+    Exemplu de mesaje:
+    “#KEY1:MESSAGECONTENT;;\r\n”
+    “@KEY1:RESPONSECONTANT;;\r\n”
+      Cheile sunt unice fiecarei functionalitati.
+
+    Are 2 tipuri publice:
+    typedef mbed::Callback<void(char const *, char *)> FCallback
+    typedef std::map<string, FCallback> CSerialSubscriberMap
+
+    Are 1 functie publica:
+    1. CSerialMonitor(Serial &f_serialPort, CSerialSubscriberMap f_serialSubscriberMap)
+      Functie de instantiere.
+      Parametrii:
+      f_serialPort - reeferinta la seriala ca obiect
+      f_serialSubscriberMap - map cu cheile si functiile de callback asociate
+
+    Are 3 functii private:
+    1. void serialRxCallback()
+      Functie pentru ce face pe Rx callback.
+
+    2. void serialTxCallback()
+      Functie pentru ce face pe Tx callback.
+
+    3. void _run()
+      Functie de monitorizare a mesajelor primite. Periodic, citeste continutul
+    buffer-ului si il decodifica. Fiecare mesaj validat este redirectionat catre
+    functia de callback, care se apeleaza folosind doi parametrii, mesajul
+    initial si raspunsul care va rezulta. Raspunsul este trimis mai departe.
+
+    Are 6 variabile private:
+    1. Serial &m_serialPort - portul de comunicare seriala
+
+    2. utils::CQueue<char, 255> m_RxBuffer - buffer Rx
+
+    3. utils::CQueue<char, 255> m_TxBuffer - buffer Tx
+
+    4. array<char, 256> m_parseBuffer - buffer-ul pentru date
+
+    5. array<char, 256>::iterator m_parseIt - iterator pentru parsare
+
+    6. CSerialSubscriberMap m_serialSubscriberMap - serial subscriber
+
+
+    3. class CTaskManager
+      Clasa pentru implementarea unui task manager. Acesta controleaza si
+    apeleaza periodic fiecare task. Are doua parti principale, un ticker si
+    o functie de mainCallback. Ticker-ul apeleaza functia timerCallback a
+    fiecarui task, iar functia mainCallback apeleaza logica principala a
+    fiecarui task daca flag-ul acestora este setat.
+
+      Are 4 functi publice:
+      1. CTaskManager(CTask **f_taskList, uint32_t f_taskCount, float f_baseFreq)
+        Functie de instantiere.
+        Parametrii:
+        f_taskList - lista de task-uri
+        f_taskCount - numarul de task-uri
+        f_baseFreq - frecventa de baza
+
+      2. ~CTaskManager()
+        Functie de deinstatiere.
+
+      3. void mainCallback()
+        Functie care apeleaza functia de run a fiecarui task.
+
+      4. void timerCallback()
+        Functie care apeleaza functia de callback a fiecarui task.
+
+      Are 3 variabile private:
+      1. CTask **m_taskList - lista de task-uri
+      2. uint32_t m_taskCount - numarul de task-uri
+      3. Ticker m_ticker - ticker pentru a apela functiile de callback
+
+  Examples namespace
+    Acest namespace prezinta exemple de folosire a altor pachete, precum Task.
+  Contine trei exemple:
+  - blinker - comuta un LED bazat pe un Task
+  - echoer - trimite mesaje periodice
+  - encoder publisher - trimite viteza de rotatie a motorului prin seriala
+    Implementarea foloseste 3 clase:
+    1. class CBlinker
+      Extinde functionalitatea de la CTask si comuta un LED.
+
+      Are 1 functie publica:
+      1. Blinker(uint32_t f_period, DigitalOut f_led)
+        Functie de instantiere care initializeaza task-ul si starea LED-ului.
+        Parametrii:
+        f_period - perioada de comutare a LED-ului
+        f_led - canal de output digital catre LED-ului
+
+      Are 1 functie privata:
+      1. void _run()
+        Functie care periodic comuta LED-ul.
+
+      Are 1 variabila privata:
+      1. DigitalOut m_led - canalul LED-ului
+
+    2. class CEchoer
+      Extinde functionalitatea de la CTask si trimite mesaje simple pe UART
+    (Universal asynchronous receiver-transmitter, adica comunicare asincrona
+    pe seriala).
+      Are 1 functie publica:
+      1. CEchoer(uint32_t f_period, Serial &f_serialPort)
+        Functie de instantiere.
+        Parametrii:
+        f_period - perioada de trimitere a mesajelor
+        f_serialPort - port-ul serial(obiect)
+
+      Are 1 functie privata:
+      1. void _run()
+        Functie apelata periodic, trimite un mesaj simplu.
+
+      Are 1 variabila privata:
+      1. Serial &m_serialPort - port-ul serial
+
+
+    3. class CEncoderPublisher
+      Extinde functionalitatea de la CTask si periodic intoarce valorile de la
+    encoder.
+      Are 2 functii publice:
+      1. CEncoderPublisher(uint32_t f_period,
+      hardware::encoders::IEncoderGetter &f_encoder, Serial &f_serial)
+        Functie de instantiere, initial publicarea valorilor este oprita.
+        Parametrii:
+        f_period - perioada la care afiseaza valorile
+        f_encoder - referinta la encoder
+        f_serial - referinta la seriala
+
+      2. void serialCallback(char const *a, char *b)
+        Functie de callback pentru a activa sau dezactiva publicarea valorilor.
+      Cand valoarea intreaga primita este mai mare sau egala cu 1, publicarea
+      este pornita si se trimit mesaje, in caz contrar este oprita.
+        Parametrii:
+        a - string-ul primit la intrare
+        b - mesajul de raspuns la iesire
+
+      Are 1 functii private:
+      1. void _run()
+        Apelata periodic pentru a trimite mesaje.
+
+      Are 3 variabile private:
+      1. bool m_isActive - flag care verifica daca publicarea este pornita
+
+      2. hardware::encoders::IEncoderGetter &m_encoder - un encoder getter
+    pentru a lua valorile de la encoder
+
+      3. Serial &m_serial - comunicarea cu seriala(obiect)
